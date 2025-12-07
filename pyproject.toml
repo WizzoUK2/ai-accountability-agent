@@ -1,0 +1,65 @@
+[project]
+name = "ai-accountability-agent"
+version = "0.1.0"
+description = "An AI-powered accountability agent that integrates with multiple tools to help manage workload, time, and commitments"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+
+    # Google APIs
+    "google-api-python-client>=2.108.0",
+    "google-auth-httplib2>=0.1.1",
+    "google-auth-oauthlib>=1.1.0",
+
+    # Communication
+    "twilio>=8.10.0",
+    "slack-sdk>=3.23.0",
+
+    # AI/LLM
+    "anthropic>=0.39.0",
+
+    # Scheduling
+    "apscheduler>=3.10.4",
+
+    # Database
+    "sqlalchemy>=2.0.23",
+    "alembic>=1.12.1",
+    "aiosqlite>=0.19.0",
+
+    # Utilities
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.25.2",
+    "structlog>=23.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.6",
+    "mypy>=1.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
