@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from src.models.database import get_db
 from src.models.user import User
 from src.models.integration import Integration, IntegrationType
 from src.integrations.google_auth import GoogleOAuth
+from src.integrations.asana import AsanaService
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -129,3 +131,131 @@ async def auth_status(db: AsyncSession = Depends(get_db)) -> dict:
         )
 
     return {"users": list(users.values())}
+
+
+class TokenAuth(BaseModel):
+    access_token: str
+    user_email: str
+
+
+@router.post("/asana")
+async def asana_auth(
+    body: TokenAuth,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Connect an Asana account via Personal Access Token."""
+    # Verify the token works
+    try:
+        service = AsanaService(access_token=body.access_token)
+        me = await service.get_me()
+        asana_email = me.get("email", body.user_email)
+    except Exception as e:
+        logger.error("Invalid Asana token", error=str(e))
+        raise HTTPException(status_code=400, detail="Invalid Asana access token")
+
+    # Find or create user
+    result = await db.execute(select(User).where(User.email == body.user_email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(
+            email=body.user_email,
+            name=me.get("name", body.user_email),
+            timezone=settings.timezone,
+            morning_briefing_time=settings.morning_briefing_time,
+        )
+        db.add(user)
+        await db.flush()
+
+    # Upsert integration
+    result = await db.execute(
+        select(Integration).where(
+            Integration.user_id == user.id,
+            Integration.type == IntegrationType.ASANA,
+        )
+    )
+    integration = result.scalar_one_or_none()
+
+    if integration:
+        integration.access_token = body.access_token
+        integration.account_email = asana_email
+        integration.is_active = True
+    else:
+        integration = Integration(
+            user_id=user.id,
+            type=IntegrationType.ASANA,
+            account_email=asana_email,
+            access_token=body.access_token,
+        )
+        db.add(integration)
+
+    await db.commit()
+    logger.info("Asana connected", user_email=body.user_email)
+
+    return {
+        "status": "success",
+        "message": f"Asana account connected for {asana_email}",
+        "user_id": str(user.id),
+    }
+
+
+@router.post("/notion")
+async def notion_auth(
+    body: TokenAuth,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Connect a Notion account via integration token."""
+    from src.integrations.notion import NotionService
+
+    # Verify the token works
+    try:
+        service = NotionService(api_key=body.access_token)
+        me = await service.get_me()
+    except Exception as e:
+        logger.error("Invalid Notion token", error=str(e))
+        raise HTTPException(status_code=400, detail="Invalid Notion integration token")
+
+    # Find or create user
+    result = await db.execute(select(User).where(User.email == body.user_email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(
+            email=body.user_email,
+            name=body.user_email,
+            timezone=settings.timezone,
+            morning_briefing_time=settings.morning_briefing_time,
+        )
+        db.add(user)
+        await db.flush()
+
+    # Upsert integration
+    result = await db.execute(
+        select(Integration).where(
+            Integration.user_id == user.id,
+            Integration.type == IntegrationType.NOTION,
+        )
+    )
+    integration = result.scalar_one_or_none()
+
+    if integration:
+        integration.access_token = body.access_token
+        integration.account_email = body.user_email
+        integration.is_active = True
+    else:
+        integration = Integration(
+            user_id=user.id,
+            type=IntegrationType.NOTION,
+            account_email=body.user_email,
+            access_token=body.access_token,
+        )
+        db.add(integration)
+
+    await db.commit()
+    logger.info("Notion connected", user_email=body.user_email)
+
+    return {
+        "status": "success",
+        "message": f"Notion account connected for {body.user_email}",
+        "user_id": str(user.id),
+    }

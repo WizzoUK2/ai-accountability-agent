@@ -7,11 +7,15 @@ import structlog
 
 from src.models.user import User
 from src.models.integration import Integration, IntegrationType
+from src.models.task import Task
 from src.integrations.google_calendar import GoogleCalendarService
 from src.integrations.google_gmail import GoogleGmailService
+from src.integrations.spark_email import SparkEmailService
 from src.integrations.twilio_sms import sms_service
 from src.integrations.slack import slack_service
 from src.services.ai_prioritization import ai_service
+
+spark_email = SparkEmailService()
 
 logger = structlog.get_logger()
 
@@ -72,26 +76,55 @@ class BriefingService:
         total_important = 0
         all_urgent_emails = []
 
-        for integration in google_integrations:
+        if spark_email.is_configured:
+            # Use SparkEmail MCP for multi-account email intelligence
             try:
-                gmail_service = GoogleGmailService.from_integration(integration)
-                summary = gmail_service.get_inbox_summary()
-                total_unread += summary.get("unread_count", 0)
-                total_important += summary.get("important_unread_count", 0)
+                inbox_summary = await spark_email.get_inbox_summary()
+                total_unread = inbox_summary.get("total_unread", 0)
 
-                # Get important unread emails
-                important_emails = gmail_service.get_important_unread(max_results=5)
-                for email in important_emails:
-                    email_dict = email.to_dict()
-                    email_dict["account"] = integration.account_email
-                    all_urgent_emails.append(email_dict)
+                # Get recent unread emails for urgency analysis
+                urgent_candidates = await spark_email.find_urgent_emails(hours=24, limit=10)
+                for email in urgent_candidates:
+                    all_urgent_emails.append({
+                        "sender": email.get("from", ""),
+                        "subject": email.get("subject", ""),
+                        "date": email.get("date", ""),
+                        "account": email.get("account", ""),
+                        "uid": email.get("uid", ""),
+                    })
 
-            except Exception as e:
-                logger.error(
-                    "Failed to fetch email data",
-                    account=integration.account_email,
-                    error=str(e),
+                # Use AI to score urgency if available
+                if all_urgent_emails and ai_service.is_configured:
+                    all_urgent_emails = await ai_service.analyze_email_urgency(all_urgent_emails)
+
+                logger.info(
+                    "SparkEmail data fetched",
+                    total_unread=total_unread,
+                    urgent_count=len(all_urgent_emails),
                 )
+            except Exception as e:
+                logger.error("Failed to fetch SparkEmail data", error=str(e))
+        else:
+            # Fallback to direct Google Gmail API
+            for integration in google_integrations:
+                try:
+                    gmail_service = GoogleGmailService.from_integration(integration)
+                    summary = gmail_service.get_inbox_summary()
+                    total_unread += summary.get("unread_count", 0)
+                    total_important += summary.get("important_unread_count", 0)
+
+                    important_emails = gmail_service.get_important_unread(max_results=5)
+                    for email in important_emails:
+                        email_dict = email.to_dict()
+                        email_dict["account"] = integration.account_email
+                        all_urgent_emails.append(email_dict)
+
+                except Exception as e:
+                    logger.error(
+                        "Failed to fetch email data",
+                        account=integration.account_email,
+                        error=str(e),
+                    )
 
         briefing_data["email_summary"] = {
             "unread_count": total_unread,
@@ -99,12 +132,37 @@ class BriefingService:
         }
         briefing_data["urgent_emails"] = all_urgent_emails
 
+        # Fetch local tasks (synced from Asana, Notion, etc.)
+        task_dicts = []
+        try:
+            tasks_result = await self.db.execute(
+                select(Task).where(
+                    Task.user_id == user.id,
+                    Task.is_completed == False,  # noqa: E712
+                )
+            )
+            tasks = tasks_result.scalars().all()
+            task_dicts = [
+                {
+                    "title": t.title,
+                    "due_date": t.due_date.isoformat() if t.due_date else None,
+                    "client_name": t.client_name,
+                    "source": t.source.value,
+                    "priority": t.priority.value,
+                }
+                for t in tasks
+            ]
+            briefing_data["tasks"] = task_dicts
+        except Exception as e:
+            logger.error("Failed to fetch tasks for briefing", error=str(e))
+
         # Use AI to generate priorities
         try:
             priorities = await ai_service.generate_daily_priorities(
                 calendar_events=all_events,
                 urgent_emails=all_urgent_emails,
                 email_summary=briefing_data["email_summary"],
+                tasks=task_dicts or None,
             )
             briefing_data["priorities"] = priorities
         except Exception as e:
@@ -146,6 +204,19 @@ class BriefingService:
                 subject = email.get("subject", "")[:25]
                 lines.append(f"• {sender}: {subject}")
 
+        # Tasks
+        tasks = briefing.get("tasks", [])
+        if tasks:
+            lines.append("")
+            lines.append(f"TASKS ({len(tasks)} open):")
+            for task in tasks[:3]:
+                title = task.get("title", "")[:35]
+                client = task.get("client_name", "")
+                suffix = f" [{client}]" if client else ""
+                lines.append(f"• {title}{suffix}")
+            if len(tasks) > 3:
+                lines.append(f"  (+{len(tasks) - 3} more)")
+
         # Priorities
         priorities = briefing.get("priorities", [])
         if priorities:
@@ -172,6 +243,7 @@ class BriefingService:
                 urgent_emails=briefing.get("urgent_emails", []),
                 email_summary=briefing.get("email_summary", {}),
                 priorities=briefing.get("priorities", []),
+                tasks=briefing.get("tasks", []),
             )
             results["slack"] = slack_service.send_dm(
                 user.slack_user_id,

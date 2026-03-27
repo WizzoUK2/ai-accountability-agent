@@ -66,6 +66,7 @@ class SlackService:
         urgent_emails: list,
         email_summary: dict,
         priorities: list | None = None,
+        tasks: list | None = None,
     ) -> list:
         """Format a morning briefing as Slack blocks."""
         blocks = [
@@ -147,6 +148,31 @@ class SlackService:
                     }
                 )
 
+        # Tasks section
+        if tasks:
+            blocks.append({"type": "divider"})
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*Open Tasks ({len(tasks)})*"},
+                }
+            )
+            task_text = ""
+            for task in tasks[:8]:
+                title = task.get("title", "Untitled")
+                client = task.get("client_name", "")
+                source = task.get("source", "")
+                suffix = f" _({client})_" if client else ""
+                task_text += f"• {title}{suffix}\n"
+            if len(tasks) > 8:
+                task_text += f"_+{len(tasks) - 8} more..._\n"
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": task_text},
+                }
+            )
+
         # Priorities section
         if priorities:
             blocks.append({"type": "divider"})
@@ -163,6 +189,31 @@ class SlackService:
                         "text": {"type": "mrkdwn", "text": f"{i}. {priority}"},
                     }
                 )
+
+        return blocks
+
+    def format_urgent_alert_blocks(self, items: list[dict]) -> list:
+        """Format urgent items as Slack blocks."""
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "Urgent Items"},
+            },
+            {"type": "divider"},
+        ]
+
+        for item in items[:10]:
+            icon = ":calendar:" if item["type"] == "calendar" else ":warning:"
+            text = f"{icon} *{item['title']}*\n{item['detail']}"
+            if item.get("client"):
+                text += f" | Client: {item['client']}"
+            if item.get("meeting_link"):
+                text += f"\n<{item['meeting_link']}|Join meeting>"
+
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text},
+            })
 
         return blocks
 

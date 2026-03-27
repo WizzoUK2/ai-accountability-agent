@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     slack_signing_secret: str = ""
     slack_user_id: str = ""
 
+    # Asana
+    asana_access_token: str = ""
+
+    # Notion
+    notion_api_key: str = ""
+
+    # Spark Email MCP
+    spark_email_command: str = ""  # e.g., "python" or path to Python
+    spark_email_args: list[str] = []  # e.g., ["/path/to/spark_email_mcp/server.py"]
+
     # Anthropic
     anthropic_api_key: str = ""
 

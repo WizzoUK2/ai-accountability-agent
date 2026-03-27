@@ -4,7 +4,7 @@ An AI-powered "adult nanny" that acts as external accountability to help manage 
 
 ## Overview
 
-This agent integrates with your digital tools (Google Suite, Asana, Slack, etc.) to:
+This agent integrates with your digital tools (Google Suite, Asana, Notion, Slack, etc.) to:
 - Aggregate information from multiple sources
 - Send proactive notifications (morning briefings, urgent alerts)
 - Use AI to prioritize tasks and highlight what matters most
@@ -18,77 +18,103 @@ This agent integrates with your digital tools (Google Suite, Asana, Slack, etc.)
 |-------------|--------|--------------|
 | Google Calendar | ✅ Ready | Fetch events from all calendars, support for multiple accounts |
 | Gmail | ✅ Ready | Inbox summary, unread counts, important email detection |
+| Spark Email MCP | ✅ Ready | Multi-account email via MCP (Gmail, Outlook, Yahoo, iCloud, custom IMAP) |
+| Asana | ✅ Ready | Task sync, project-to-client mapping, two-way completion |
+| Notion | ✅ Ready | Database sync, flexible schema mapping, task aggregation |
 | Twilio SMS | ✅ Ready | Send text notifications, morning briefings |
-| Slack | ✅ Ready | Rich formatted messages, daily briefings with blocks |
-| Asana | 🔜 Planned | Task sync, project tracking |
-| Notion | 🔜 Planned | Database sync, task aggregation |
+| Slack | ✅ Ready | Rich formatted messages, daily briefings with blocks, urgent alerts |
 
 ### Core Features
 
 #### Morning Briefings
 Automated daily briefings sent at your configured time including:
 - Today's calendar events (aggregated from all connected accounts)
-- Email inbox summary (unread count, important items)
-- Urgent emails requiring attention
+- Email inbox summary across all accounts (via Spark Email MCP or Gmail API)
+- Urgent emails requiring attention, scored by AI
+- Open tasks from Asana and Notion, grouped by client
 - AI-generated priorities for the day
+
+#### Urgent Item Alerts
+Runs every 15 minutes to check for:
+- Calendar events starting within 15 minutes (with meeting links)
+- Overdue tasks from Asana, Notion, or manual entries
+- Urgent unread emails across all connected accounts
+- Alert deduplication with 60-minute cooldown per item
 
 #### AI Prioritization
 Powered by Claude to analyze:
 - Calendar events for meeting prep needs
 - Emails for urgency scoring (1-10 scale)
 - Tasks for priority scoring (0-100 scale)
-- Combined context to suggest daily focus areas
+- Combined context across all sources to suggest daily focus areas
 
 #### Multi-Account Support
-Connect multiple Google accounts (e.g., work + personal + client accounts) and see everything in one unified view.
+Connect multiple accounts across services and see everything in one unified view:
+- Multiple Google accounts (work + personal + client)
+- Multiple email accounts via Spark Email MCP (any IMAP provider)
+- Multiple Asana workspaces and projects
+- Multiple Notion databases
 
 #### Scheduled Jobs
-- Morning briefings: Runs every 5 minutes to catch users in different timezones
-- Urgent item checks: Runs every 15 minutes for time-sensitive alerts
+- Morning briefings: Every 5 minutes (timezone-aware per user)
+- Urgent item checks: Every 15 minutes
+- External task sync: Every 30 minutes (Asana + Notion)
 
 ## Project Structure
 
 ```
 ai-accountability-agent/
+├── alembic/                     # Database migrations
+│   ├── env.py                   # Async migration config
+│   └── versions/                # Migration files
 ├── config/
 │   ├── __init__.py
-│   └── settings.py           # Pydantic settings management
+│   └── settings.py              # Pydantic settings management
 ├── src/
 │   ├── api/
-│   │   ├── auth.py           # OAuth endpoints
-│   │   ├── briefings.py      # Briefing generation API
-│   │   ├── tasks.py          # Task management API
-│   │   └── routes.py         # Route aggregation
+│   │   ├── auth.py              # OAuth + token auth endpoints
+│   │   ├── briefings.py         # Briefing generation API
+│   │   ├── tasks.py             # Task management API
+│   │   └── routes.py            # Route aggregation
 │   ├── integrations/
-│   │   ├── google_auth.py    # Google OAuth flow
-│   │   ├── google_calendar.py # Calendar service
-│   │   ├── google_gmail.py   # Gmail service
-│   │   ├── twilio_sms.py     # SMS notifications
-│   │   └── slack.py          # Slack messaging
+│   │   ├── asana.py             # Asana API client (async httpx)
+│   │   ├── google_auth.py       # Google OAuth flow
+│   │   ├── google_calendar.py   # Calendar service
+│   │   ├── google_gmail.py      # Gmail service (fallback)
+│   │   ├── notion.py            # Notion API client (async httpx)
+│   │   ├── slack.py             # Slack messaging + block formatting
+│   │   ├── spark_email.py       # Spark Email MCP client
+│   │   └── twilio_sms.py        # SMS notifications
 │   ├── models/
-│   │   ├── database.py       # SQLAlchemy async setup
-│   │   ├── user.py           # User model
-│   │   ├── integration.py    # OAuth token storage
-│   │   └── task.py           # Task model with priority scoring
+│   │   ├── database.py          # SQLAlchemy async setup
+│   │   ├── user.py              # User model
+│   │   ├── integration.py       # OAuth/token storage
+│   │   └── task.py              # Task model with priority scoring
 │   ├── services/
-│   │   ├── briefing.py       # Briefing generation logic
-│   │   ├── scheduler.py      # APScheduler background jobs
-│   │   └── ai_prioritization.py # Claude AI integration
-│   └── main.py               # FastAPI application entry
-├── tests/
-├── .env.example              # Environment template
+│   │   ├── ai_prioritization.py # Claude AI integration
+│   │   ├── asana_sync.py        # Asana → local task sync
+│   │   ├── briefing.py          # Briefing generation + delivery
+│   │   ├── notion_sync.py       # Notion → local task sync
+│   │   └── scheduler.py         # APScheduler background jobs
+│   └── main.py                  # FastAPI application entry
+├── tests/                       # 48 tests across 10 files
+├── .env.example                 # Environment template
 ├── .gitignore
-└── pyproject.toml            # Project dependencies
+├── alembic.ini                  # Alembic configuration
+└── pyproject.toml               # Project dependencies
 ```
 
 ## Setup
 
 ### Prerequisites
 - Python 3.11+
-- Google Cloud Console project with Calendar and Gmail APIs enabled
-- Twilio account (for SMS)
+- Google Cloud Console project with Calendar and Gmail APIs enabled (for Google integration)
+- Asana Personal Access Token (for Asana integration)
+- Notion Integration Token (for Notion integration)
+- Twilio account (for SMS notifications)
 - Slack workspace with bot configured (for Slack notifications)
 - Anthropic API key (for AI features)
+- [spark_email_mcp](https://github.com/WizzoUK2/spark_email_mcp) (for multi-account email)
 
 ### Installation
 
@@ -106,7 +132,7 @@ ai-accountability-agent/
 
 3. Install dependencies:
    ```bash
-   pip install -e .
+   pip install -e ".[dev]"
    ```
 
 4. Configure environment:
@@ -115,7 +141,12 @@ ai-accountability-agent/
    # Edit .env with your credentials
    ```
 
-5. Run the application:
+5. Run database migrations:
+   ```bash
+   alembic upgrade head
+   ```
+
+6. Run the application:
    ```bash
    uvicorn src.main:app --reload
    ```
@@ -131,6 +162,25 @@ ai-accountability-agent/
    - Application type: Web application
    - Authorized redirect URI: `http://localhost:8000/auth/google/callback`
 5. Copy Client ID and Client Secret to `.env`
+
+### Asana Setup
+
+1. Go to [Asana Developer Console](https://app.asana.com/0/developer-console)
+2. Create a Personal Access Token
+3. Connect via API: `POST /auth/asana` with your token and email
+
+### Notion Setup
+
+1. Go to [Notion Integrations](https://www.notion.so/my-integrations)
+2. Create a new integration
+3. Share your databases with the integration
+4. Connect via API: `POST /auth/notion` with your integration token and email
+
+### Spark Email MCP Setup
+
+1. Clone and set up [spark_email_mcp](https://github.com/WizzoUK2/spark_email_mcp)
+2. Configure email accounts in `~/.spark_email_config.json`
+3. Set `SPARK_EMAIL_COMMAND` and `SPARK_EMAIL_ARGS` in `.env`
 
 ### Twilio Setup
 
@@ -150,6 +200,8 @@ ai-accountability-agent/
 ### Authentication
 - `GET /auth/google` - Start Google OAuth flow
 - `GET /auth/google/callback` - OAuth callback handler
+- `POST /auth/asana` - Connect Asana via Personal Access Token
+- `POST /auth/notion` - Connect Notion via integration token
 - `GET /auth/status` - View connected integrations
 
 ### Briefings
@@ -170,8 +222,12 @@ ai-accountability-agent/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID | Required |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Required |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | Optional |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Optional |
+| `ASANA_ACCESS_TOKEN` | Asana Personal Access Token | Optional |
+| `NOTION_API_KEY` | Notion integration token | Optional |
+| `SPARK_EMAIL_COMMAND` | Python command for Spark Email MCP | Optional |
+| `SPARK_EMAIL_ARGS` | Args for Spark Email MCP server | Optional |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID | Optional |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token | Optional |
 | `TWILIO_FROM_NUMBER` | Twilio phone number | Optional |
@@ -186,20 +242,8 @@ ai-accountability-agent/
 
 ### Near-term Roadmap
 
-#### Asana Integration
-- Sync tasks from Asana projects
-- Map Asana projects to clients
-- Two-way sync for task completion
-- Due date and priority synchronization
-
-#### Notion Integration
-- Connect to Notion databases
-- Sync tasks and projects
-- Support for different database schemas
-
 #### Enhanced Notifications
 - Calendar event reminders (15 min, 1 hour before)
-- Overdue task alerts
 - Weekly summary reports
 - End-of-day recap
 
