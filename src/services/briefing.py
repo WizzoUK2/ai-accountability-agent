@@ -14,6 +14,7 @@ from src.integrations.spark_email import SparkEmailService
 from src.integrations.twilio_sms import sms_service
 from src.integrations.slack import slack_service
 from src.services.ai_prioritization import ai_service
+from src.services.twin_client import twin_client
 
 spark_email = SparkEmailService()
 
@@ -93,9 +94,28 @@ class BriefingService:
                         "uid": email.get("uid", ""),
                     })
 
-                # Use AI to score urgency if available
-                if all_urgent_emails and ai_service.is_configured:
-                    all_urgent_emails = await ai_service.analyze_email_urgency(all_urgent_emails)
+                # Use Twin API for Craig-shaped urgency scoring, fall back to generic
+                if all_urgent_emails:
+                    twin_scored = await twin_client.score_emails([
+                        {
+                            "id": e.get("uid", str(i)),
+                            "subject": e.get("subject", ""),
+                            "sender": e.get("sender", ""),
+                            "preview": e.get("snippet", "")[:200],
+                            "received_at": e.get("date", ""),
+                        }
+                        for i, e in enumerate(all_urgent_emails)
+                    ])
+                    if twin_scored is not None:
+                        logger.info("Email urgency scored via Twin API", count=len(twin_scored))
+                        for scored in twin_scored:
+                            for email in all_urgent_emails:
+                                if email.get("uid", "") == scored.get("id", ""):
+                                    email["urgency_score"] = scored.get("urgency", 5)
+                                    email["urgency_reason"] = scored.get("reasoning", "")
+                        all_urgent_emails.sort(key=lambda e: e.get("urgency_score", 5), reverse=True)
+                    elif ai_service.is_configured:
+                        all_urgent_emails = await ai_service.analyze_email_urgency(all_urgent_emails)
 
                 logger.info(
                     "SparkEmail data fetched",
@@ -156,17 +176,38 @@ class BriefingService:
         except Exception as e:
             logger.error("Failed to fetch tasks for briefing", error=str(e))
 
-        # Use AI to generate priorities
+        # Use Twin API for Craig-shaped priorities, fall back to generic
         try:
-            priorities = await ai_service.generate_daily_priorities(
-                calendar_events=all_events,
-                urgent_emails=all_urgent_emails,
-                email_summary=briefing_data["email_summary"],
-                tasks=task_dicts or None,
-            )
-            briefing_data["priorities"] = priorities
+            # Build items list for twin prioritisation
+            twin_items = []
+            for e in all_events[:5]:
+                twin_items.append({"name": e.get("summary", ""), "type": "calendar", "time": e.get("time_range", "")})
+            for e in all_urgent_emails[:5]:
+                twin_items.append({"name": e.get("subject", ""), "type": "email", "sender": e.get("sender", "")})
+            for t in task_dicts[:5]:
+                twin_items.append({"name": t.get("title", ""), "type": "task", "due_date": t.get("due_date")})
+
+            twin_result = await twin_client.prioritise(twin_items)
+            if twin_result is not None:
+                logger.info("Priorities generated via Twin API")
+                priorities = [
+                    item.get("reasoning", item.get("suggested_action", ""))
+                    for item in twin_result.get("items", [])
+                    if item.get("urgency", 0) >= 50
+                ][:5]
+                if twin_result.get("craig_note"):
+                    priorities.insert(0, twin_result["craig_note"])
+                briefing_data["priorities"] = priorities
+            else:
+                priorities = await ai_service.generate_daily_priorities(
+                    calendar_events=all_events,
+                    urgent_emails=all_urgent_emails,
+                    email_summary=briefing_data["email_summary"],
+                    tasks=task_dicts or None,
+                )
+                briefing_data["priorities"] = priorities
         except Exception as e:
-            logger.error("Failed to generate AI priorities", error=str(e))
+            logger.error("Failed to generate priorities", error=str(e))
 
         return briefing_data
 
