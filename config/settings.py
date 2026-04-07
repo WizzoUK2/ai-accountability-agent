@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # Digital Twin API
+    twin_api_enabled: bool = False
+    twin_api_url: str = "http://192.168.5.90:8100"
+    twin_api_key: str = ""
+
     # Scheduling
     morning_briefing_time: str = "07:00"
     timezone: str = "Australia/Sydney"
