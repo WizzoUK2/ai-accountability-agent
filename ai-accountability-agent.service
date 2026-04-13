@@ -1,0 +1,27 @@
+# /etc/systemd/system/ai-accountability-agent.service
+#
+# Install:
+#   sudo cp ai-accountability-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ai-accountability-agent
+#   sudo systemctl start ai-accountability-agent
+#   sudo journalctl -u ai-accountability-agent -f
+
+[Unit]
+Description=AI Accountability Agent
+After=network.target twin-api.service
+Wants=twin-api.service
+
+[Service]
+Type=simple
+User=wizzo
+WorkingDirectory=/home/wizzo/ai-accountability-agent
+EnvironmentFile=/home/wizzo/ai-accountability-agent/.env
+ExecStart=/home/wizzo/ai-accountability-agent/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
