@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     twin_api_enabled: bool = False
     twin_api_url: str = "http://192.168.5.90:8100"
     twin_api_key: str = ""
+    twin_api_timeout: int = 30
 
     # Scheduling
     morning_briefing_time: str = "07:00"
