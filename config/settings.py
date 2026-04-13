@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     twin_api_key: str = ""
     twin_api_timeout: int = 30
 
+    # Entity registry (shared with twin vault)
+    entities_yaml_path: str = ""  # e.g., "/home/wizzo/wizzo-digital-twin/entities.yaml"
+
     # Scheduling
     morning_briefing_time: str = "07:00"
     timezone: str = "Australia/Sydney"

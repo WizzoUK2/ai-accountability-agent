@@ -15,6 +15,7 @@ import structlog
 
 from config import settings
 from src.services.ai_prioritization import ai_service
+from src.services.entity_matcher import match_entity
 
 logger = structlog.get_logger()
 
@@ -69,27 +70,40 @@ class TwinClient:
     @staticmethod
     def _adapt_email(email: dict, index: int) -> dict:
         """Convert agent email dict to Twin API EmailItem shape."""
-        return {
+        sender = email.get("sender", email.get("from", ""))
+        account = email.get("account", "")
+        adapted = {
             "id": email.get("uid") or email.get("id") or hashlib.md5(
-                f"{email.get('sender', '')}{email.get('subject', '')}{index}".encode()
+                f"{sender}{email.get('subject', '')}{index}".encode()
             ).hexdigest()[:12],
             "subject": email.get("subject", ""),
-            "sender": email.get("sender", email.get("from", "")),
+            "sender": sender,
             "preview": email.get("snippet", email.get("preview", ""))[:200],
             "received_at": email.get("date", datetime.now(timezone.utc).isoformat()),
         }
+        # Tag with entity if we can match by account or sender domain
+        entity = match_entity(account_email=account, sender_email=sender)
+        if entity:
+            adapted["entity"] = entity
+        return adapted
 
     @staticmethod
     def _adapt_task(task: dict, index: int) -> dict:
         """Convert agent task dict to Twin API TaskItem shape."""
-        return {
+        client_name = task.get("client_name", task.get("project"))
+        adapted = {
             "id": task.get("id") or str(index),
             "name": task.get("title", task.get("name", "")),
-            "project": task.get("client_name", task.get("project")),
+            "project": client_name,
             "due_on": task.get("due_date"),
             "assignee": task.get("assignee"),
             "notes": task.get("notes"),
         }
+        # Tag with entity if we can match by project/client name
+        entity = match_entity(project_name=client_name)
+        if entity:
+            adapted["entity"] = entity
+        return adapted
 
     # ------------------------------------------------------------------
     # Public methods (drop-in replacements for ai_service calls)
@@ -114,13 +128,17 @@ class TwinClient:
         # Build the mixed items list the /v1/prioritise endpoint expects
         items = []
         for event in calendar_events[:10]:
-            items.append({
+            item = {
                 "id": event.get("id", event.get("summary", "")),
                 "type": "calendar",
                 "name": event.get("summary", ""),
                 "time_range": event.get("time_range", ""),
                 "account": event.get("account", ""),
-            })
+            }
+            entity = match_entity(account_email=event.get("account", ""))
+            if entity:
+                item["entity"] = entity
+            items.append(item)
         for i, email in enumerate(urgent_emails[:10]):
             adapted = self._adapt_email(email, i)
             adapted["type"] = "email"
